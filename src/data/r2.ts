@@ -203,6 +203,7 @@ export const CHAPTER_FILES: Record<number, number[]> = {
   662: range(1, 16),
   663: range(1, 32),
   664: range(1, 30),
+  665: range(1, 22),
 };
 
 export const AVAILABLE_CHAPTERS = Object.keys(CHAPTER_FILES)
