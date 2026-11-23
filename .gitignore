@@ -1,0 +1,13 @@
+node_modules/
+.expo/
+android/
+ios/
+dist/
+.env
+*.log
+.DS_Store
+server/node_modules/
+server/data/
+
+.env
+.downloads/
