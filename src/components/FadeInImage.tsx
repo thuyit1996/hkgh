@@ -16,13 +16,24 @@ type Props = {
   muted: string;
   /** Nhấn giữ trang (lưu / chia sẻ) */
   onLongPress?: () => void;
+  /** Kích thước thật của ảnh khi tải xong (để reader đặt đúng chiều cao trang) */
+  onSize?: (width: number, height: number) => void;
 };
 
 /**
  * Ảnh trang truyện: skeleton đúng tỉ lệ → fade-in khi tải xong.
  * Lỗi tải thì hiện nút "Tải lại trang" thay vì để trống.
  */
-export function FadeInImage({ uri, width, height, background, placeholder, muted, onLongPress }: Props) {
+export function FadeInImage({
+  uri,
+  width,
+  height,
+  background,
+  placeholder,
+  muted,
+  onLongPress,
+  onSize,
+}: Props) {
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [attempt, setAttempt] = useState(0);
   const opacity = useRef(new Animated.Value(0)).current;
@@ -87,7 +98,10 @@ export function FadeInImage({ uri, width, height, background, placeholder, muted
           cachePolicy="disk"
           transition={200}
           recyclingKey={source}
-          onLoad={() => setStatus('loaded')}
+          onLoad={(e) => {
+            if (e.source?.width && e.source?.height) onSize?.(e.source.width, e.source.height);
+            setStatus('loaded');
+          }}
           onError={() => setStatus('error')}
         />
       ) : (
@@ -96,7 +110,11 @@ export function FadeInImage({ uri, width, height, background, placeholder, muted
           source={{ uri: source }}
           style={{ position: 'absolute', width, height, opacity }}
           resizeMode="contain"
-          onLoad={() => setStatus('loaded')}
+          onLoad={(e) => {
+            const src = e.nativeEvent?.source;
+            if (src?.width && src?.height) onSize?.(src.width, src.height);
+            setStatus('loaded');
+          }}
           onError={() => setStatus('error')}
         />
       )}

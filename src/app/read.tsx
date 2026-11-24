@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -31,6 +32,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getChapterPages, type ChapterPayload } from '../api/chapters';
 import { getManifest } from '../api/manifest';
+import { getPageRatios, loadPageRatios, pageKey, setPageRatio } from '../api/pageSizes';
 import {
   DEFAULT_READER_PREFS,
   getReaderPrefs,
@@ -170,6 +172,8 @@ export default function ReaderScreen() {
   const [scrollPct, setScrollPct] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [payload, setPayload] = useState<ChapterPayload | null>(null);
+  // Tỉ lệ cao/rộng thật của từng trang ("chương:trang" → h/w); chưa biết thì dùng tỉ lệ mặc định
+  const [ratios, setRatios] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -250,11 +254,14 @@ export default function ReaderScreen() {
       setError(null);
       offsetRef.current = { x: 0, y: 0 };
       zoomRef.current = 1;
-      getChapterPages(current.index, signal)
-        .then((data) => {
+      Promise.all([getChapterPages(current.index, signal), loadPageRatios()])
+        .then(([data]) => {
+          if (signal?.aborted) return;
           const resume = resumeRef.current;
           const startPage =
             resume && resume.chapter === current.index ? Math.min(resume.page, data.pageCount) : 1;
+          // Tỉ lệ đã biết từ lần đọc trước → layout đúng ngay, nhảy tới trang đọc dở chính xác
+          setRatios(getPageRatios(data.chapter, data.pageCount));
           setPayload(data);
           setLoading(false);
           setScrollPct(0);
@@ -316,8 +323,43 @@ export default function ReaderScreen() {
   }, [payload, scrollPct, markRead]);
 
   const aspect = payload?.aspectRatio ?? 1.445;
-  const pageHeight = width * aspect;
   const contentTop = insets.top + HEADER_HEIGHT;
+
+  // Chiều cao + vị trí đầu mỗi trang theo tỉ lệ thật (ảnh dài cả chương cao gấp hàng chục lần trang thường)
+  const layout = useMemo(() => {
+    const heights: number[] = [];
+    const offsets: number[] = [];
+    let y = 0;
+    for (const page of payload?.pages ?? []) {
+      const h = width * (ratios[pageKey(payload!.chapter, page.index)] ?? aspect);
+      offsets.push(y);
+      heights.push(h);
+      y += h;
+    }
+    return { heights, offsets };
+  }, [payload, ratios, width, aspect]);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
+  const onPageSize = useCallback((chapter: number, page: number, w: number, h: number) => {
+    const key = pageKey(chapter, page);
+    const ratio = h / w;
+    setPageRatio(key, ratio);
+    setRatios((prev) => (prev[key] && Math.abs(prev[key] - ratio) < 0.001 ? prev : { ...prev, [key]: ratio }));
+  }, []);
+
+  /** Trang chứa toạ độ y (tính từ đầu trang 1, tỉ lệ zoom 1) */
+  const pageAt = (y: number) => {
+    const { offsets } = layoutRef.current;
+    let lo = 0;
+    let hi = offsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (offsets[mid] <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
 
   // ---- Tự cuộn ----
   useEffect(() => {
@@ -363,7 +405,7 @@ export default function ReaderScreen() {
     const resume = resumeRef.current;
     if (!resume || !payload || resume.chapter !== payload.chapter) return;
     resumeRef.current = null;
-    const y = (resume.page - 1) * pageHeight;
+    const y = layoutRef.current.offsets[resume.page - 1] ?? 0;
     offsetRef.current.y = y;
     scrollRef.current?.scrollTo({ y, animated: false });
   };
@@ -379,7 +421,7 @@ export default function ReaderScreen() {
 
     // Trang đang nằm giữa màn hình
     const center = (contentOffset.y + layoutMeasurement.height / 2) / scale - contentTop;
-    const page = Math.min(pageCount, Math.max(1, Math.floor(center / Math.max(1, pageHeight)) + 1));
+    const page = Math.min(pageCount, Math.max(1, pageAt(center)));
     if (page !== lastPageRef.current) {
       lastPageRef.current = page;
       setCurrentPage(page);
@@ -594,6 +636,8 @@ export default function ReaderScreen() {
           bouncesZoom
           pinchGestureEnabled
           contentContainerStyle={{ paddingTop: contentTop }}
+          // Trang phía trên tải xong và đổi chiều cao (ảnh dài) → giữ nguyên chỗ đang đọc
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           onScroll={onScroll}
           onContentSizeChange={onContentSizeChange}
           onScrollBeginDrag={() => setChromeVisible(false)}
@@ -608,12 +652,13 @@ export default function ReaderScreen() {
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
         >
-          {payload?.pages.map((page) => (
+          {payload?.pages.map((page, i) => (
             <FadeInImage
               key={page.url}
               uri={page.url}
               width={width}
-              height={pageHeight}
+              height={layout.heights[i]}
+              onSize={(w, h) => onPageSize(payload.chapter, page.index, w, h)}
               background={palette.bg}
               placeholder={palette.placeholder}
               muted={palette.muted}

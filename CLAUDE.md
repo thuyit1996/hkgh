@@ -36,10 +36,10 @@ node scripts/sync-chapters.mjs --sync-manifest --dry   # cập nhật r2.ts theo
   - Thêm dòng vào `r2.ts`.
   - Có thể ghép ảnh xem trước bằng Swift/AppKit, vì máy không có PIL hay ImageMagick.
 
-## Trạng thái (cập nhật 2026-11-23)
+## Trạng thái (cập nhật 2026-11-24)
 
-- Trong `r2.ts` hiện có chương **463–472** và **510–661**.
-- **Chương 521–661 mới nằm trong `.downloads/`, có thể chưa upload lên R2.**
+- Trong `r2.ts` hiện có chương **463–472** và **510–733** (733 là chương mới nhất).
+- **Chương 521–733 nằm trong `.downloads/`, có thể chưa upload lên R2.**
 - Chưa có: 1–462 và **473–509**.
 - 640 và 655: ảnh do người dùng tự bổ sung, mình đã xếp thứ tự. Ảnh trùng khác bản dịch của 655 nằm ở `.downloads/655-extra/`.
 - Thiếu vài trang trên trang nguồn:
@@ -50,4 +50,8 @@ node scripts/sync-chapters.mjs --sync-manifest --dry   # cập nhật r2.ts theo
   - 574: `016` trùng `001`, `017` là banner beeng.net.
   - 561: `030` trùng `001`.
   - Nhiều chương có trang `001` kích thước 800×600, có thể là trang credit của nhóm dịch.
-- Tiếp theo: tải từ **662** trở đi (truyện trên nguồn đã tới khoảng 733).
+- Từ 702 trở đi tải từ truyenvn.my (`/truyen-tranh/hiep-khach-giang-ho-m/chapter-N`, ảnh trên imggo.net). Tải ảnh KHÔNG gửi Referer (gửi thì bị 403).
+  - Chương 709 trên nguồn này là ảnh giả picsum.photos; người dùng tự bổ sung.
+  - Nguồn chèn banner quảng cáo (900×555, 700×397, 888×979) ở đầu/cuối chương; chỉ xoá ở 706, 707 (trang 001) và 728–733. 711–727 giữ nguyên vì đã upload; bản đã lọc nằm ở `.downloads/_cleaned/`.
+- **Ảnh dài cả chương** (cao 12.000–33.000px, app hiển thị thành dải nhỏ): 689–699, 730–733. Cần cắt thành từng trang.
+- 682 thiếu `006.jpg`.
