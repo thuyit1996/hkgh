@@ -1,7 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useKeepAwake } from 'expo-keep-awake';
-import { router, useLocalSearchParams } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from "@expo/vector-icons";
+import { useKeepAwake } from "expo-keep-awake";
+import { router, useLocalSearchParams } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
   useEffect,
@@ -10,7 +10,7 @@ import {
   useState,
   type ComponentProps,
   type ComponentRef,
-} from 'react';
+} from "react";
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -20,6 +20,7 @@ import {
   type GestureResponderEvent,
   Modal,
   type NativeScrollEvent,
+  PanResponder,
   type NativeSyntheticEvent,
   Platform,
   Pressable,
@@ -27,12 +28,17 @@ import {
   Switch,
   useWindowDimensions,
   View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { getChapterPages, type ChapterPayload } from '../api/chapters';
-import { getManifest } from '../api/manifest';
-import { getPageRatios, loadPageRatios, pageKey, setPageRatio } from '../api/pageSizes';
+import { getChapterPages, type ChapterPayload } from "../api/chapters";
+import { getManifest } from "../api/manifest";
+import {
+  getPageRatios,
+  loadPageRatios,
+  pageKey,
+  setPageRatio,
+} from "../api/pageSizes";
 import {
   DEFAULT_READER_PREFS,
   getReaderPrefs,
@@ -40,29 +46,41 @@ import {
   setReaderPrefs,
   type ReaderPrefs,
   type ReaderTheme,
-} from '../api/prefs';
-import { getReadChapters, markChapterRead, saveProgress } from '../api/progress';
-import { isPageSaved, removeSavedPage, savePage } from '../api/saved';
-import { CHAPTER_ROW_HEIGHT, ChapterRow } from '../components/ChapterRow';
-import { FadeInImage } from '../components/FadeInImage';
-import { Button } from '../components/ui/Button';
-import { Text } from '../components/ui/Text';
-import { comic } from '../data/mock';
-import { getChapterImageUrl } from '../data/r2';
-import { useChapters } from '../hooks/useChapters';
-import { haptic } from '../native/haptics';
-import { prefetchImages } from '../native/image';
-import { sharePage } from '../native/share';
-import { colors } from '../theme/tokens';
-import { goBackOrHome } from '../utils/navigation';
+} from "../api/prefs";
+import {
+  getReadChapters,
+  markChapterRead,
+  saveProgress,
+} from "../api/progress";
+import { isPageSaved, removeSavedPage, savePage } from "../api/saved";
+import { CHAPTER_ROW_HEIGHT, ChapterRow } from "../components/ChapterRow";
+import { FadeInImage } from "../components/FadeInImage";
+import { Button } from "../components/ui/Button";
+import { Text } from "../components/ui/Text";
+import { comic } from "../data/mock";
+import { getChapterImageUrl } from "../data/r2";
+import { useChapters } from "../hooks/useChapters";
+import { haptic } from "../native/haptics";
+import { prefetchImages } from "../native/image";
+import { sharePage } from "../native/share";
+import { colors } from "../theme/tokens";
+import { goBackOrHome } from "../utils/navigation";
 
 const HEADER_HEIGHT = 56;
 const BAR_HEIGHT = 60;
 /** Kéo quá cuối chương bao nhiêu px thì sang chương sau */
 const PULL_NEXT = 80;
 /** Pinch / double-tap zoom chỉ có trên iOS (ScrollView native) */
-const CAN_ZOOM = Platform.OS === 'ios';
+const CAN_ZOOM = Platform.OS === "ios";
 const DOUBLE_TAP_MS = 260;
+/** Lazy load: chỉ gắn ảnh cho các trang trong khoảng này quanh trang đang đọc */
+const LAZY_BEHIND = 3;
+const LAZY_AHEAD = 5;
+/** Vuốt ngang: phải kéo quá ngưỡng này (tỉ lệ bề rộng màn hình, tối đa px) mới chuyển chương */
+const SWIPE_TRIGGER_RATIO = 0.3;
+const SWIPE_TRIGGER_MAX = 140;
+/** Bắt đầu nhận là vuốt ngang khi dx vượt ngưỡng này và ngang gấp đôi dọc */
+const SWIPE_START = 14;
 
 type Palette = {
   bg: string;
@@ -71,7 +89,7 @@ type Palette = {
   text: string;
   muted: string;
   placeholder: string;
-  statusBar: 'light' | 'dark';
+  statusBar: "light" | "dark";
   label: string;
 };
 
@@ -83,8 +101,8 @@ const PALETTES: Record<ReaderTheme, Palette> = {
     text: colors.night.text,
     muted: colors.night.muted,
     placeholder: colors.night.raised,
-    statusBar: 'light',
-    label: 'Tối',
+    statusBar: "light",
+    label: "Tối",
   },
   sepia: {
     bg: colors.sepia.DEFAULT,
@@ -93,8 +111,8 @@ const PALETTES: Record<ReaderTheme, Palette> = {
     text: colors.ink.DEFAULT,
     muted: colors.muted,
     placeholder: colors.sepia.raised,
-    statusBar: 'dark',
-    label: 'Giấy',
+    statusBar: "dark",
+    label: "Giấy",
   },
   light: {
     bg: colors.paper.DEFAULT,
@@ -103,23 +121,23 @@ const PALETTES: Record<ReaderTheme, Palette> = {
     text: colors.ink.DEFAULT,
     muted: colors.muted,
     placeholder: colors.paper.deep,
-    statusBar: 'dark',
-    label: 'Sáng',
+    statusBar: "dark",
+    label: "Sáng",
   },
 };
 
 const DIM_STEPS = [
-  { value: 0, label: 'Tắt' },
-  { value: 0.2, label: '20%' },
-  { value: 0.4, label: '40%' },
-  { value: 0.6, label: '60%' },
+  { value: 0, label: "Tắt" },
+  { value: 0.2, label: "20%" },
+  { value: 0.4, label: "40%" },
+  { value: 0.6, label: "60%" },
 ];
 
 const SCROLL_STEPS = [
-  { value: 0, label: 'Tắt' },
-  { value: 30, label: 'Chậm' },
-  { value: 60, label: 'Vừa' },
-  { value: 110, label: 'Nhanh' },
+  { value: 0, label: "Tắt" },
+  { value: 30, label: "Chậm" },
+  { value: 60, label: "Vừa" },
+  { value: 110, label: "Nhanh" },
 ];
 
 /** Nhóm nút chọn một trong nhiều */
@@ -142,11 +160,11 @@ function Segmented<T extends string | number>({
             accessibilityRole="button"
             accessibilityState={{ selected }}
             onPress={() => onChange(option.value)}
-            className={`h-11 flex-1 items-center justify-center ${selected ? 'bg-ink' : 'active:bg-paper-deep'} ${
-              i > 0 ? 'border-l border-ink' : ''
+            className={`h-11 flex-1 items-center justify-center ${selected ? "bg-ink" : "active:bg-paper-deep"} ${
+              i > 0 ? "border-l border-ink" : ""
             }`}
           >
-            <Text variant="label" tone={selected ? 'paper' : 'ink'}>
+            <Text variant="label" tone={selected ? "paper" : "ink"}>
               {option.label}
             </Text>
           </Pressable>
@@ -189,7 +207,8 @@ export default function ReaderScreen() {
   const touchingRef = useRef(false);
   const autoNextFiredRef = useRef<number | null>(null);
 
-  const requestedIndex = Number(params.chapter?.replace('ch-', '')) || items[0]?.index || 1;
+  const requestedIndex =
+    Number(params.chapter?.replace("ch-", "")) || items[0]?.index || 1;
   const current = items.find((item) => item.index === requestedIndex) ?? {
     id: `ch-${requestedIndex}`,
     index: requestedIndex,
@@ -199,7 +218,9 @@ export default function ReaderScreen() {
 
   // Trang cần cuộn tới khi mở từ "Đọc tiếp" / trang đã lưu — chỉ dùng một lần
   const resumeRef = useRef<{ chapter: number; page: number } | null>(
-    Number(params.page) > 1 ? { chapter: requestedIndex, page: Number(params.page) } : null
+    Number(params.page) > 1
+      ? { chapter: requestedIndex, page: Number(params.page) }
+      : null,
   );
 
   // Chương liền trước/sau trong danh sách (các chương không liên tục, vd 472 → 510)
@@ -259,7 +280,9 @@ export default function ReaderScreen() {
           if (signal?.aborted) return;
           const resume = resumeRef.current;
           const startPage =
-            resume && resume.chapter === current.index ? Math.min(resume.page, data.pageCount) : 1;
+            resume && resume.chapter === current.index
+              ? Math.min(resume.page, data.pageCount)
+              : 1;
           // Tỉ lệ đã biết từ lần đọc trước → layout đúng ngay, nhảy tới trang đọc dở chính xác
           setRatios(getPageRatios(data.chapter, data.pageCount));
           setPayload(data);
@@ -270,13 +293,13 @@ export default function ReaderScreen() {
           setLastSeenChapter(current.index);
         })
         .catch((err: Error) => {
-          if (err.name === 'AbortError') return;
+          if (err.name === "AbortError") return;
           setError(err.message);
           setPayload(null);
           setLoading(false);
         });
     },
-    [current.index]
+    [current.index],
   );
 
   useEffect(() => {
@@ -291,7 +314,8 @@ export default function ReaderScreen() {
     const controller = new AbortController();
     getChapterPages(nextChapter.index, controller.signal)
       .then((data) => {
-        if (!data.offline) prefetchImages(data.pages.slice(0, 3).map((p) => p.url));
+        if (!data.offline)
+          prefetchImages(data.pages.slice(0, 3).map((p) => p.url));
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -300,7 +324,10 @@ export default function ReaderScreen() {
   // ---- Lưu tiến độ (debounce khi đổi trang) ----
   useEffect(() => {
     if (!payload || payload.chapter !== current.index) return;
-    const timer = setTimeout(() => saveProgress(current.index, currentPage), 600);
+    const timer = setTimeout(
+      () => saveProgress(current.index, currentPage),
+      600,
+    );
     return () => clearTimeout(timer);
   }, [payload, current.index, currentPage]);
 
@@ -331,7 +358,8 @@ export default function ReaderScreen() {
     const offsets: number[] = [];
     let y = 0;
     for (const page of payload?.pages ?? []) {
-      const h = width * (ratios[pageKey(payload!.chapter, page.index)] ?? aspect);
+      const h =
+        width * (ratios[pageKey(payload!.chapter, page.index)] ?? aspect);
       offsets.push(y);
       heights.push(h);
       y += h;
@@ -341,12 +369,19 @@ export default function ReaderScreen() {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
 
-  const onPageSize = useCallback((chapter: number, page: number, w: number, h: number) => {
-    const key = pageKey(chapter, page);
-    const ratio = h / w;
-    setPageRatio(key, ratio);
-    setRatios((prev) => (prev[key] && Math.abs(prev[key] - ratio) < 0.001 ? prev : { ...prev, [key]: ratio }));
-  }, []);
+  const onPageSize = useCallback(
+    (chapter: number, page: number, w: number, h: number) => {
+      const key = pageKey(chapter, page);
+      const ratio = h / w;
+      setPageRatio(key, ratio);
+      setRatios((prev) =>
+        prev[key] && Math.abs(prev[key] - ratio) < 0.001
+          ? prev
+          : { ...prev, [key]: ratio },
+      );
+    },
+    [],
+  );
 
   /** Trang chứa toạ độ y (tính từ đầu trang 1, tỉ lệ zoom 1) */
   const pageAt = (y: number) => {
@@ -363,7 +398,8 @@ export default function ReaderScreen() {
 
   // ---- Tự cuộn ----
   useEffect(() => {
-    if (!prefs.autoScroll || loading || error || showSettings || showChapters) return;
+    if (!prefs.autoScroll || loading || error || showSettings || showChapters)
+      return;
 
     let raf = 0;
     let last = 0;
@@ -375,10 +411,21 @@ export default function ReaderScreen() {
         const max = Math.max(0, contentHeightRef.current - screenHeight);
         const y = offsetRef.current.y;
         if (y < max - 1) {
-          const nextY = Math.min(max, y + prefs.autoScroll * zoomRef.current * dt);
+          const nextY = Math.min(
+            max,
+            y + prefs.autoScroll * zoomRef.current * dt,
+          );
           offsetRef.current.y = nextY;
-          scrollRef.current?.scrollTo({ x: offsetRef.current.x, y: nextY, animated: false });
-        } else if (prefs.autoNext && nextChapter && autoNextFiredRef.current !== current.index) {
+          scrollRef.current?.scrollTo({
+            x: offsetRef.current.x,
+            y: nextY,
+            animated: false,
+          });
+        } else if (
+          prefs.autoNext &&
+          nextChapter &&
+          autoNextFiredRef.current !== current.index
+        ) {
           autoNextFiredRef.current = current.index;
           setTimeout(() => goTo(nextChapter), 1500);
         }
@@ -411,7 +458,8 @@ export default function ReaderScreen() {
   };
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement, zoomScale } = event.nativeEvent;
+    const { contentOffset, contentSize, layoutMeasurement, zoomScale } =
+      event.nativeEvent;
     const pageCount = payload?.pageCount ?? 1;
     // Khi pinch-zoom (iOS), offset tính theo toạ độ đã phóng to → quy về tỉ lệ 1
     const scale = zoomScale || 1;
@@ -420,7 +468,8 @@ export default function ReaderScreen() {
     contentHeightRef.current = contentSize.height;
 
     // Trang đang nằm giữa màn hình
-    const center = (contentOffset.y + layoutMeasurement.height / 2) / scale - contentTop;
+    const center =
+      (contentOffset.y + layoutMeasurement.height / 2) / scale - contentTop;
     const page = Math.min(pageCount, Math.max(1, pageAt(center)));
     if (page !== lastPageRef.current) {
       lastPageRef.current = page;
@@ -428,15 +477,22 @@ export default function ReaderScreen() {
     }
 
     // Chỉ cập nhật thanh tiến độ khi đổi ≥ 0.5% để khỏi re-render mỗi frame
-    const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
+    const scrollable = Math.max(
+      1,
+      contentSize.height - layoutMeasurement.height,
+    );
     const pct = Math.min(1, Math.max(0, contentOffset.y / scrollable));
-    setScrollPct((prev) => (Math.abs(prev - pct) >= 0.005 || pct >= 0.98 ? pct : prev));
+    setScrollPct((prev) =>
+      Math.abs(prev - pct) >= 0.005 || pct >= 0.98 ? pct : prev,
+    );
   };
 
   const onScrollEndDrag = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const overscroll = contentOffset.y - (contentSize.height - layoutMeasurement.height);
-    if (prefs.autoNext && nextChapter && overscroll > PULL_NEXT) goTo(nextChapter);
+    const overscroll =
+      contentOffset.y - (contentSize.height - layoutMeasurement.height);
+    if (prefs.autoNext && nextChapter && overscroll > PULL_NEXT)
+      goTo(nextChapter);
   };
 
   // ---- Zoom bằng chạm hai lần (iOS) ----
@@ -513,7 +569,8 @@ export default function ReaderScreen() {
 
     const last = lastTapRef.current;
     const isDouble =
-      now - last.t < DOUBLE_TAP_MS && Math.abs(pageX - last.x) + Math.abs(pageY - last.y) < 40;
+      now - last.t < DOUBLE_TAP_MS &&
+      Math.abs(pageX - last.x) + Math.abs(pageY - last.y) < 40;
 
     if (isDouble) {
       if (tapTimer.current) clearTimeout(tapTimer.current);
@@ -527,12 +584,108 @@ export default function ReaderScreen() {
     tapTimer.current = setTimeout(toggleChrome, DOUBLE_TAP_MS);
   };
 
+  // ---- Vuốt ngang để sang chương trước / sau ----
+  // Chỉ chuyển khi kéo đủ xa (swipeTrigger); thả tay trước ngưỡng thì nội dung trượt về chỗ cũ
+  const swipeTrigger = Math.min(width * SWIPE_TRIGGER_RATIO, SWIPE_TRIGGER_MAX);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const [swipeArmed, setSwipeArmed] = useState(false);
+  const swipeStateRef = useRef({ armed: false });
+  const swipeCtx = useRef({ prevChapter, nextChapter, swipeTrigger, goTo });
+  swipeCtx.current = { prevChapter, nextChapter, swipeTrigger, goTo };
+
+  useEffect(() => {
+    swipeX.setValue(0);
+    swipeStateRef.current.armed = false;
+    setSwipeArmed(false);
+  }, [current.index, swipeX]);
+
+  const swipeResponder = useRef(
+    PanResponder.create({
+      // Capture ở view cha để giành cử chỉ ngang từ ScrollView dọc; đang zoom thì để ScrollView kéo ngang
+      onMoveShouldSetPanResponderCapture: (e, g) =>
+        zoomRef.current <= 1.01 &&
+        e.nativeEvent.touches.length <= 1 &&
+        Math.abs(g.dx) > SWIPE_START &&
+        Math.abs(g.dx) > Math.abs(g.dy) * 2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_e, g) => {
+        const {
+          prevChapter: prev,
+          nextChapter: next,
+          swipeTrigger: trigger,
+        } = swipeCtx.current;
+        // Không có chương theo hướng đó → kéo rất nặng, không bao giờ đạt ngưỡng
+        const hasTarget = g.dx > 0 ? !!prev : !!next;
+        const dx = hasTarget ? g.dx : g.dx * 0.2;
+        swipeX.setValue(dx);
+        const armed = hasTarget && Math.abs(g.dx) >= trigger;
+        if (armed !== swipeStateRef.current.armed) {
+          swipeStateRef.current.armed = armed;
+          setSwipeArmed(armed);
+          if (armed) haptic.tap();
+        }
+      },
+      onPanResponderRelease: (_e, g) => {
+        const {
+          prevChapter: prev,
+          nextChapter: next,
+          goTo: go,
+        } = swipeCtx.current;
+        const armed = swipeStateRef.current.armed;
+        swipeStateRef.current.armed = false;
+        setSwipeArmed(false);
+        if (armed) {
+          go(g.dx > 0 ? prev : next);
+          return;
+        }
+        Animated.spring(swipeX, {
+          toValue: 0,
+          useNativeDriver: true,
+          bounciness: 4,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        swipeStateRef.current.armed = false;
+        setSwipeArmed(false);
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
+      },
+    }),
+  ).current;
+
+  // Nội dung trượt theo tay nhưng có lực cản; chip báo chương hiện dần từ mép
+  const contentShift = swipeX.interpolate({
+    inputRange: [-width, 0, width],
+    outputRange: [-width * 0.35, 0, width * 0.35],
+  });
+  const prevHintOpacity = swipeX.interpolate({
+    inputRange: [0, swipeTrigger * 0.3, swipeTrigger],
+    outputRange: [0, 0.5, 1],
+    extrapolate: "clamp",
+  });
+  const prevHintShift = swipeX.interpolate({
+    inputRange: [0, swipeTrigger],
+    outputRange: [-48, 12],
+    extrapolate: "clamp",
+  });
+  const nextHintOpacity = swipeX.interpolate({
+    inputRange: [-swipeTrigger, -swipeTrigger * 0.3, 0],
+    outputRange: [1, 0.5, 0],
+    extrapolate: "clamp",
+  });
+  const nextHintShift = swipeX.interpolate({
+    inputRange: [-swipeTrigger, 0],
+    outputRange: [-12, 48],
+    extrapolate: "clamp",
+  });
+
   // ---- Nhấn giữ trang: lưu / chia sẻ ----
   const pageActions = async (pageIndex: number, url: string) => {
     haptic.light();
     const files = getManifest()[current.index] ?? [];
     const remoteUrl =
-      files[pageIndex - 1] !== undefined ? getChapterImageUrl(current.index, files[pageIndex - 1]) : url;
+      files[pageIndex - 1] !== undefined
+        ? getChapterImageUrl(current.index, files[pageIndex - 1])
+        : url;
     const saved = await isPageSaved(current.index, pageIndex);
 
     const toggleSave = () => {
@@ -544,25 +697,29 @@ export default function ReaderScreen() {
     };
     const share = () => {
       sharePage(url, current.index, pageIndex).catch(() =>
-        Alert.alert('Không chia sẻ được', 'Kiểm tra kết nối mạng rồi thử lại.')
+        Alert.alert("Không chia sẻ được", "Kiểm tra kết nối mạng rồi thử lại."),
       );
     };
 
     const title = `Chương ${current.index} · trang ${pageIndex}`;
-    const saveLabel = saved ? 'Bỏ lưu trang này' : 'Lưu trang này';
+    const saveLabel = saved ? "Bỏ lưu trang này" : "Lưu trang này";
 
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
-        { title, options: [saveLabel, 'Chia sẻ ảnh', 'Huỷ'], cancelButtonIndex: 2 },
+        {
+          title,
+          options: [saveLabel, "Chia sẻ ảnh", "Huỷ"],
+          cancelButtonIndex: 2,
+        },
         (index) => {
           if (index === 0) toggleSave();
           if (index === 1) share();
-        }
+        },
       );
     } else {
       Alert.alert(title, undefined, [
-        { text: 'Huỷ', style: 'cancel' },
-        { text: 'Chia sẻ', onPress: share },
+        { text: "Huỷ", style: "cancel" },
+        { text: "Chia sẻ", onPress: share },
         { text: saveLabel, onPress: toggleSave },
       ]);
     }
@@ -583,24 +740,38 @@ export default function ReaderScreen() {
   });
 
   const barItems: {
-    icon: ComponentProps<typeof Ionicons>['name'];
+    icon: ComponentProps<typeof Ionicons>["name"];
     label: string;
     onPress: () => void;
     disabled?: boolean;
   }[] = [
-    { icon: 'chevron-back', label: 'Trước', onPress: () => goTo(prevChapter), disabled: !prevChapter },
-    { icon: 'list', label: 'Chương', onPress: openChapters },
-    { icon: 'options-outline', label: 'Tuỳ chỉnh', onPress: () => setShowSettings(true) },
-    { icon: 'chevron-forward', label: 'Sau', onPress: () => goTo(nextChapter), disabled: !nextChapter },
+    {
+      icon: "chevron-back",
+      label: "Trước",
+      onPress: () => goTo(prevChapter),
+      disabled: !prevChapter,
+    },
+    { icon: "list", label: "Chương", onPress: openChapters },
+    {
+      icon: "options-outline",
+      label: "Tuỳ chỉnh",
+      onPress: () => setShowSettings(true),
+    },
+    {
+      icon: "chevron-forward",
+      label: "Sau",
+      onPress: () => goTo(nextChapter),
+      disabled: !nextChapter,
+    },
   ];
 
   const subtitle = [
     payload ? `Trang ${currentPage}/${payload.pageCount}` : null,
-    payload?.offline ? 'Đã tải về máy' : comic.title,
-    prefs.autoScroll ? 'Tự cuộn' : null,
+    payload?.offline ? "Đã tải về máy" : comic.title,
+    prefs.autoScroll ? "Tự cuộn" : null,
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
 
   return (
     <View className="flex-1" style={{ backgroundColor: palette.bg }}>
@@ -609,122 +780,255 @@ export default function ReaderScreen() {
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={colors.seal.DEFAULT} />
-          <Text variant="caption" className="mt-3" style={{ color: palette.muted }}>
+          <Text
+            variant="caption"
+            className="mt-3"
+            style={{ color: palette.muted }}
+          >
             Đang tải chương {current.index}…
           </Text>
         </View>
       ) : error ? (
         <View className="flex-1 items-center justify-center px-8">
-          <Ionicons name="cloud-offline-outline" size={40} color={palette.muted} />
-          <Text variant="labelLg" className="mt-3 text-center" style={{ color: palette.text }}>
+          <Ionicons
+            name="cloud-offline-outline"
+            size={40}
+            color={palette.muted}
+          />
+          <Text
+            variant="labelLg"
+            className="mt-3 text-center"
+            style={{ color: palette.text }}
+          >
             {error}
           </Text>
-          <Text variant="body" className="mt-1 text-center" style={{ color: palette.muted }}>
+          <Text
+            variant="body"
+            className="mt-1 text-center"
+            style={{ color: palette.muted }}
+          >
             Kiểm tra kết nối mạng rồi thử lại.
           </Text>
-          <Button label="Thử lại" className="mt-5 self-stretch" onPress={() => load()} />
+          <Button
+            label="Thử lại"
+            className="mt-5 self-stretch"
+            onPress={() => load()}
+          />
         </View>
       ) : (
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
-          // Pinch-zoom để đọc chữ nhỏ (chỉ iOS; Android cần react-native-gesture-handler)
-          minimumZoomScale={1}
-          maximumZoomScale={CAN_ZOOM ? 3 : 1}
-          bouncesZoom
-          pinchGestureEnabled
-          contentContainerStyle={{ paddingTop: contentTop }}
-          // Trang phía trên tải xong và đổi chiều cao (ảnh dài) → giữ nguyên chỗ đang đọc
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          onScroll={onScroll}
-          onContentSizeChange={onContentSizeChange}
-          onScrollBeginDrag={() => setChromeVisible(false)}
-          onScrollEndDrag={onScrollEndDrag}
-          onMomentumScrollBegin={() => {
-            touchingRef.current = true;
-          }}
-          onMomentumScrollEnd={() => {
-            touchingRef.current = false;
-          }}
-          scrollEventThrottle={16}
-          onTouchStart={onTouchStart}
-          onTouchEnd={onTouchEnd}
+        <Animated.View
+          style={{ flex: 1, transform: [{ translateX: contentShift }] }}
+          {...swipeResponder.panHandlers}
         >
-          {payload?.pages.map((page, i) => (
-            <FadeInImage
-              key={page.url}
-              uri={page.url}
-              width={width}
-              height={layout.heights[i]}
-              onSize={(w, h) => onPageSize(payload.chapter, page.index, w, h)}
-              background={palette.bg}
-              placeholder={palette.placeholder}
-              muted={palette.muted}
-              onLongPress={() => pageActions(page.index, page.url)}
-            />
-          ))}
-
-          {/* Cuối chương */}
-          <View
-            className="px-5 pt-10"
-            style={{ paddingBottom: insets.bottom + BAR_HEIGHT + 32, minHeight: screenHeight * 0.4 }}
+          <ScrollView
+            ref={scrollRef}
+            style={{ flex: 1 }}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            // Pinch-zoom để đọc chữ nhỏ (chỉ iOS; Android cần react-native-gesture-handler)
+            minimumZoomScale={1}
+            maximumZoomScale={CAN_ZOOM ? 3 : 1}
+            bouncesZoom
+            pinchGestureEnabled
+            contentContainerStyle={{ paddingTop: contentTop }}
+            // Trang phía trên tải xong và đổi chiều cao (ảnh dài) → giữ nguyên chỗ đang đọc
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            onScroll={onScroll}
+            onContentSizeChange={onContentSizeChange}
+            onScrollBeginDrag={() => setChromeVisible(false)}
+            onScrollEndDrag={onScrollEndDrag}
+            onMomentumScrollBegin={() => {
+              touchingRef.current = true;
+            }}
+            onMomentumScrollEnd={() => {
+              touchingRef.current = false;
+            }}
+            scrollEventThrottle={16}
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
           >
-            <Text variant="overline" style={{ color: palette.muted }}>
-              Hết chương {current.index}
-            </Text>
-            {nextChapter ? (
-              <>
-                <Button
-                  className="mt-4"
-                  label={`Chương ${nextChapter.index}`}
-                  hint={nextChapter.title ?? 'Đọc chương tiếp theo'}
-                  onPress={() => goTo(nextChapter)}
+            {payload?.pages.map((page, i) =>
+              // Lazy load: trang xa chỗ đang đọc chỉ là khung trống đúng chiều cao (ảnh đã tải nằm trong cache đĩa)
+              page.index < currentPage - LAZY_BEHIND ||
+              page.index > currentPage + LAZY_AHEAD ? (
+                <View
+                  key={page.url}
+                  style={{
+                    width,
+                    height: layout.heights[i],
+                    backgroundColor: palette.placeholder,
+                  }}
                 />
-                {prefs.autoNext ? (
-                  <Text variant="caption" className="mt-2 text-center" style={{ color: palette.muted }}>
-                    Kéo tiếp lên để sang chương sau
-                  </Text>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <Text variant="title" className="mt-3" style={{ color: palette.text }}>
-                  Bạn đã theo kịp chương mới nhất
-                </Text>
-                <Text variant="body" className="mt-1" style={{ color: palette.muted }}>
-                  Chương mới sẽ xuất hiện ở trang truyện khi được cập nhật.
-                </Text>
-              </>
+              ) : (
+                <FadeInImage
+                  key={page.url}
+                  uri={page.url}
+                  width={width}
+                  height={layout.heights[i]}
+                  onSize={(w, h) =>
+                    onPageSize(payload.chapter, page.index, w, h)
+                  }
+                  background={palette.bg}
+                  placeholder={palette.placeholder}
+                  muted={palette.muted}
+                  onLongPress={() => pageActions(page.index, page.url)}
+                />
+              ),
             )}
-            {prevChapter ? (
-              <Pressable
-                accessibilityRole="button"
-                className="mt-3 flex-row items-center self-start py-2 active:opacity-60"
-                onPress={() => goTo(prevChapter)}
-              >
-                <Ionicons name="arrow-back" size={16} color={palette.muted} />
-                <Text variant="label" className="ml-1.5" style={{ color: palette.muted }}>
-                  Chương trước ({prevChapter.index})
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </ScrollView>
+
+            {/* Cuối chương */}
+            <View
+              className="px-5 pt-10"
+              style={{
+                paddingBottom: insets.bottom + BAR_HEIGHT + 32,
+                minHeight: screenHeight * 0.4,
+              }}
+            >
+              <Text variant="overline" style={{ color: palette.muted }}>
+                Hết chương {current.index}
+              </Text>
+              {nextChapter ? (
+                <>
+                  <Button
+                    className="mt-4"
+                    label={`Chương ${nextChapter.index}`}
+                    hint={nextChapter.title ?? "Đọc chương tiếp theo"}
+                    onPress={() => goTo(nextChapter)}
+                  />
+                  {prefs.autoNext ? (
+                    <Text
+                      variant="caption"
+                      className="mt-2 text-center"
+                      style={{ color: palette.muted }}
+                    >
+                      Kéo tiếp lên để sang chương sau
+                    </Text>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <Text
+                    variant="title"
+                    className="mt-3"
+                    style={{ color: palette.text }}
+                  >
+                    Bạn đã theo kịp chương mới nhất
+                  </Text>
+                  <Text
+                    variant="body"
+                    className="mt-1"
+                    style={{ color: palette.muted }}
+                  >
+                    Chương mới sẽ xuất hiện ở trang truyện khi được cập nhật.
+                  </Text>
+                </>
+              )}
+              {prevChapter ? (
+                <Pressable
+                  accessibilityRole="button"
+                  className="mt-3 flex-row items-center self-start py-2 active:opacity-60"
+                  onPress={() => goTo(prevChapter)}
+                >
+                  <Ionicons name="arrow-back" size={16} color={palette.muted} />
+                  <Text
+                    variant="label"
+                    className="ml-1.5"
+                    style={{ color: palette.muted }}
+                  >
+                    Chương trước ({prevChapter.index})
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </ScrollView>
+        </Animated.View>
       )}
+
+      {/* Chip báo chương khi vuốt ngang */}
+      {!loading && !error ? (
+        <>
+          {prevChapter ? (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                left: 0,
+                top: screenHeight / 2 - 24,
+                opacity: prevHintOpacity,
+                transform: [{ translateX: prevHintShift }],
+              }}
+            >
+              <View
+                className="h-12 flex-row items-center rounded-full px-4"
+                style={{
+                  backgroundColor: swipeArmed
+                    ? colors.seal.DEFAULT
+                    : palette.bar,
+                }}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={18}
+                  color={swipeArmed ? "#fff" : palette.text}
+                />
+                <Text
+                  variant="label"
+                  className="ml-1"
+                  style={{ color: swipeArmed ? "#fff" : palette.text }}
+                >
+                  Chương {prevChapter.index}
+                </Text>
+              </View>
+            </Animated.View>
+          ) : null}
+          {nextChapter ? (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                right: 0,
+                top: screenHeight / 2 - 24,
+                opacity: nextHintOpacity,
+                transform: [{ translateX: nextHintShift }],
+              }}
+            >
+              <View
+                className="h-12 flex-row items-center rounded-full px-4"
+                style={{
+                  backgroundColor: swipeArmed
+                    ? colors.seal.DEFAULT
+                    : palette.bar,
+                }}
+              >
+                <Text
+                  variant="label"
+                  className="mr-1"
+                  style={{ color: swipeArmed ? "#fff" : palette.text }}
+                >
+                  Chương {nextChapter.index}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={swipeArmed ? "#fff" : palette.text}
+                />
+              </View>
+            </Animated.View>
+          ) : null}
+        </>
+      ) : null}
 
       {/* Giảm sáng ảnh khi đọc đêm */}
       {prefs.dim > 0 ? (
         <View
           pointerEvents="none"
           style={{
-            position: 'absolute',
+            position: "absolute",
             left: 0,
             right: 0,
             top: 0,
             bottom: 0,
-            backgroundColor: '#000',
+            backgroundColor: "#000",
             opacity: prefs.dim,
           }}
         />
@@ -737,15 +1041,18 @@ export default function ReaderScreen() {
           className="absolute bottom-0 left-0 right-0 h-0.5"
           style={{ backgroundColor: palette.line }}
         >
-          <View className="h-0.5 bg-seal" style={{ width: `${Math.round(scrollPct * 100)}%` }} />
+          <View
+            className="h-0.5 bg-seal"
+            style={{ width: `${Math.round(scrollPct * 100)}%` }}
+          />
         </View>
       ) : null}
 
       {/* Header */}
       <Animated.View
-        pointerEvents={chromeVisible ? 'auto' : 'none'}
+        pointerEvents={chromeVisible ? "auto" : "none"}
         style={{
-          position: 'absolute',
+          position: "absolute",
           left: 0,
           right: 0,
           top: 0,
@@ -756,7 +1063,10 @@ export default function ReaderScreen() {
           transform: [{ translateY: headerTranslate }],
         }}
       >
-        <View className="flex-row items-center px-2" style={{ height: HEADER_HEIGHT }}>
+        <View
+          className="flex-row items-center px-2"
+          style={{ height: HEADER_HEIGHT }}
+        >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
@@ -767,11 +1077,19 @@ export default function ReaderScreen() {
             <Ionicons name="arrow-back" size={22} color={palette.text} />
           </Pressable>
           <View className="ml-1 flex-1">
-            <Text variant="heading" numberOfLines={1} style={{ color: palette.text }}>
+            <Text
+              variant="heading"
+              numberOfLines={1}
+              style={{ color: palette.text }}
+            >
               Chương {current.index}
-              {current.title ? ` · ${current.title}` : ''}
+              {current.title ? ` · ${current.title}` : ""}
             </Text>
-            <Text variant="caption" numberOfLines={1} style={{ color: palette.muted }}>
+            <Text
+              variant="caption"
+              numberOfLines={1}
+              style={{ color: palette.muted }}
+            >
               {subtitle}
             </Text>
           </View>
@@ -780,9 +1098,9 @@ export default function ReaderScreen() {
 
       {/* Bottom bar */}
       <Animated.View
-        pointerEvents={chromeVisible ? 'auto' : 'none'}
+        pointerEvents={chromeVisible ? "auto" : "none"}
         style={{
-          position: 'absolute',
+          position: "absolute",
           left: 0,
           right: 0,
           bottom: 0,
@@ -792,7 +1110,10 @@ export default function ReaderScreen() {
         }}
       >
         <View className="h-0.5" style={{ backgroundColor: palette.line }}>
-          <View className="h-0.5 bg-seal" style={{ width: `${Math.round(scrollPct * 100)}%` }} />
+          <View
+            className="h-0.5 bg-seal"
+            style={{ width: `${Math.round(scrollPct * 100)}%` }}
+          />
         </View>
         <View className="flex-row" style={{ height: BAR_HEIGHT }}>
           {barItems.map((item) => (
@@ -809,7 +1130,11 @@ export default function ReaderScreen() {
               style={{ opacity: item.disabled ? 0.3 : 1 }}
             >
               <Ionicons name={item.icon} size={22} color={palette.text} />
-              <Text variant="caption" className="mt-0.5" style={{ color: palette.muted }}>
+              <Text
+                variant="caption"
+                className="mt-0.5"
+                style={{ color: palette.muted }}
+              >
                 {item.label}
               </Text>
             </Pressable>
@@ -827,10 +1152,13 @@ export default function ReaderScreen() {
         <Pressable
           accessibilityLabel="Đóng"
           className="flex-1"
-          style={{ backgroundColor: 'rgba(14,13,11,0.4)' }}
+          style={{ backgroundColor: "rgba(14,13,11,0.4)" }}
           onPress={() => setShowSettings(false)}
         />
-        <View className="bg-paper px-5 pt-2" style={{ paddingBottom: insets.bottom + 16 }}>
+        <View
+          className="bg-paper px-5 pt-2"
+          style={{ paddingBottom: insets.bottom + 16 }}
+        >
           <View className="flex-row items-center justify-between py-2">
             <Text variant="title">Tuỳ chỉnh</Text>
             <Pressable
@@ -847,7 +1175,7 @@ export default function ReaderScreen() {
             Nền
           </Text>
           <Segmented
-            options={(['dark', 'sepia', 'light'] as ReaderTheme[]).map((t) => ({
+            options={(["dark", "sepia", "light"] as ReaderTheme[]).map((t) => ({
               value: t,
               label: PALETTES[t].label,
             }))}
@@ -858,7 +1186,11 @@ export default function ReaderScreen() {
           <Text variant="overline" tone="muted" className="mt-5">
             Giảm sáng ảnh
           </Text>
-          <Segmented options={DIM_STEPS} value={prefs.dim} onChange={(dim) => updatePrefs({ dim })} />
+          <Segmented
+            options={DIM_STEPS}
+            value={prefs.dim}
+            onChange={(dim) => updatePrefs({ dim })}
+          />
 
           <Text variant="overline" tone="muted" className="mt-5">
             Tự cuộn
@@ -887,7 +1219,8 @@ export default function ReaderScreen() {
           </View>
 
           <Text variant="caption" tone="muted" className="mt-6">
-            {CAN_ZOOM ? 'Chụm hai ngón hoặc chạm hai lần để phóng to. ' : ''}
+            Vuốt ngang đủ xa để sang chương trước / sau.{" "}
+            {CAN_ZOOM ? "Chụm hai ngón hoặc chạm hai lần để phóng to. " : ""}
             Nhấn giữ một trang để lưu hoặc chia sẻ.
           </Text>
         </View>
@@ -903,10 +1236,13 @@ export default function ReaderScreen() {
         <Pressable
           accessibilityLabel="Đóng"
           className="flex-1"
-          style={{ backgroundColor: 'rgba(14,13,11,0.5)' }}
+          style={{ backgroundColor: "rgba(14,13,11,0.5)" }}
           onPress={() => setShowChapters(false)}
         />
-        <View className="h-[70%] bg-paper" style={{ paddingBottom: insets.bottom }}>
+        <View
+          className="h-[70%] bg-paper"
+          style={{ paddingBottom: insets.bottom }}
+        >
           <View className="flex-row items-center justify-between border-b border-line py-2 pl-5 pr-2">
             <Text variant="title">Chương</Text>
             <Pressable
