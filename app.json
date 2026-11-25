@@ -36,7 +36,13 @@
       "package": "com.hangha.commic"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "Hiệp Khách Giang Hồ",
+      "shortName": "HKGH",
+      "backgroundColor": "#F3EFE6",
+      "themeColor": "#F3EFE6"
     }
   }
 }

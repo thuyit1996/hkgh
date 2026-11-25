@@ -14,6 +14,16 @@ Trả lời người dùng bằng **tiếng Việt**.
   - Viết dạng `range(a, b)` hoặc `without(range(a, b), …)`, vì một số chương thiếu file ở giữa.
 - Bucket R2 đang mở công khai qua link `pub-…r2.dev`. Link này bị Cloudflare giới hạn tốc độ (lỗi 1015); nên gắn tên miền riêng.
 
+## Bản web / PWA (deploy Vercel)
+
+- `npm run build:web` = `expo export -p web` (SPA, `output: "single"`) + `scripts/pwa-inject.mjs` chèn thẻ manifest/icon iOS/đăng ký SW vào `dist/index.html`.
+  - KHÔNG dùng `src/app/+html.tsx`: Expo 58 bỏ mất thẻ JS/CSS khi có file này.
+  - Không dùng `output: "static"`: SSR render với chiều cao màn hình = 0, hydrate giữ style sai.
+- Code riêng cho web nằm ở file `.web.ts`: `src/api/offline.web.ts` (lưu ảnh vào Cache Storage `chapters`), `src/native/share.web.ts`, `src/native/haptics.web.ts`.
+- `public/sw.js`: ảnh R2 ưu tiên lấy từ cache `chapters`; khung app lưu vào `shell-<VERSION>`. Đổi cách cache thì tăng `VERSION`.
+- `vercel.json`: build command, rewrite mọi đường dẫn về `index.html`.
+- Bucket R2 cần bật CORS (GET từ tên miền web) để tải offline/chia sẻ ảnh trên web.
+
 ## Script tải chương: `scripts/sync-chapters.mjs`
 
 Cần Node ≥ 18. Máy mặc định đang dùng Node 16, nên chạy `source ~/.nvm/nvm.sh && nvm use` trước (dùng Node 24).

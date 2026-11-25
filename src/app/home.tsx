@@ -130,8 +130,12 @@ export default function HomeScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
       >
         {/* Ảnh bìa tràn viền, mờ dần vào nền giấy */}
-        <View style={{ height: height * 0.56 }}>
-          <Image source={comic.cover} className="h-full w-full" resizeMode="cover" />
+        <View style={{ height: height * 0.56, overflow: 'hidden' }}>
+          <Image
+            source={comic.cover}
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, width: '100%', height: '100%' }}
+            resizeMode="cover"
+          />
           <LinearGradient
             colors={['rgba(23,20,15,0.35)', 'rgba(243,239,230,0)', colors.paper.DEFAULT]}
             locations={[0, 0.4, 1]}
